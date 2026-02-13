@@ -1,5 +1,13 @@
 # SF Hacks 2026
 
+## About our project
+
+### Technologies used
+- TBA
+
+### Future enhancements
+- TBA
+
 ## Contributors
 - Don Dang (`donkimdang`)
 - Andrew Dover (`adover06`)
