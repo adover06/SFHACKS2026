@@ -1,6 +1,8 @@
 # SF Hacks 2026
+- Date: February 13–14, 2026
 
 ## About our project
+TBA
 
 ### Technologies used
 - TBA
