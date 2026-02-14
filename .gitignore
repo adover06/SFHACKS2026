@@ -5,4 +5,5 @@ __pycache__/
 .DS_Store
 actian-vectorAI-db-beta/
 node_modules/
-
+data/*.json
+data/*.csv
