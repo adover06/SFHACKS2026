@@ -1,3 +1,5 @@
 venv/
 .DS_Store
 actian-vectorAI-db-beta/
+node_modules/
+
