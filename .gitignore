@@ -1,4 +1,7 @@
 venv/
+.env
+__pycache__/
+*.pyc
 .DS_Store
 actian-vectorAI-db-beta/
 node_modules/

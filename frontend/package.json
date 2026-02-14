@@ -11,10 +11,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
-<<<<<<< HEAD
-=======
     "lucide-react": "^0.564.0",
->>>>>>> 11c551f161b39ff3a4995c30bf882b2369b19bcd
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind": "^4.0.0",
