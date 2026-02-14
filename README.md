@@ -1,4 +1,5 @@
-# SF Hacks 2026
+# Treat Yo' Self
+- Hackathon: SF Hacks 2026
 - Date: February 13–14, 2026
 
 ## About our project
