@@ -8,11 +8,13 @@ class Settings:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     ACTIAN_DB_ADDRESS: str = os.getenv("ACTIAN_DB_ADDRESS", "localhost:50051")
     COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "recipes")
-    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "3072"))
-    GEMINI_MODEL: str = "gemini-2.5-flash"
-    EMBEDDING_MODEL: str = "gemini-embedding-001"
-    USE_AGENT: bool = os.getenv("USE_AGENT", "false").lower() == "false"
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+    USE_AGENT: bool = os.getenv("USE_AGENT", "false").lower() == "true"
     RELAXED_MATCHING: bool = os.getenv("RELAXED_MATCHING", "true").lower() == "true"
+
+    # Local embedding model (sentence-transformers, runs on CPU/GPU)
+    EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "all-mpnet-base-v2")
+    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
 
 
 settings = Settings()

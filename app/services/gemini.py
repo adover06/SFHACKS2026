@@ -2,17 +2,43 @@ from google import genai
 from google.genai import types
 import PIL.Image
 import io
+import logging
 
 from app.config import settings
 from app.models import PantryInventory
 
+logger = logging.getLogger(__name__)
 
-# ── Gemini Client ──
+
+# ── Gemini Client (for Vision only) ──
 
 _client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
-# ── Image Analysis ──
+# ── Local Embedding Model (sentence-transformers) ──
+
+_embedder = None
+
+
+def _get_embedder():
+    """Lazy-load the sentence-transformers model.
+
+    Loads on first call so the server starts fast.
+    Uses GPU if available (CUDA), otherwise CPU.
+    """
+    global _embedder
+    if _embedder is None:
+        from sentence_transformers import SentenceTransformer
+
+        model_name = settings.EMBEDDING_MODEL_NAME
+        logger.info(f"Loading embedding model: {model_name}")
+        _embedder = SentenceTransformer(model_name)
+        device = _embedder.device
+        logger.info(f"Embedding model loaded on {device}")
+    return _embedder
+
+
+# ── Image Analysis (Gemini Vision) ──
 
 
 def analyze_image(image_bytes: bytes) -> PantryInventory:
@@ -37,22 +63,22 @@ def analyze_image(image_bytes: bytes) -> PantryInventory:
     return response.parsed
 
 
-# ── Text Embeddings ──
+# ── Text Embeddings (Local, sentence-transformers) ──
 
 
 def generate_embedding(text: str) -> list[float]:
-    """Generate a 768-dim embedding vector using Gemini text-embedding-004."""
-    result = _client.models.embed_content(
-        model=settings.EMBEDDING_MODEL,
-        contents=text,
-    )
-    return result.embeddings[0].values
+    """Generate an embedding vector using the local sentence-transformers model."""
+    model = _get_embedder()
+    vector = model.encode(text, normalize_embeddings=True)
+    return vector.tolist()
 
 
 def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
-    """Generate embeddings for a batch of texts."""
-    result = _client.models.embed_content(
-        model=settings.EMBEDDING_MODEL,
-        contents=texts,
-    )
-    return [e.values for e in result.embeddings]
+    """Generate embeddings for a batch of texts using the local model.
+
+    On GPU this is very fast (thousands per second).
+    On CPU it's still fine for small batches.
+    """
+    model = _get_embedder()
+    vectors = model.encode(texts, normalize_embeddings=True, batch_size=128)
+    return vectors.tolist()

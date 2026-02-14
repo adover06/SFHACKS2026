@@ -3,12 +3,16 @@
 Recipe Ingestion Script for Treat Your-shelf
 
 Reads the Kaggle recipe JSON dataset, auto-infers dietary tags and skill level,
-generates embeddings via Gemini text-embedding-004, and upserts everything into
-the Actian VectorAI DB.
+generates embeddings using local sentence-transformers model (GPU-accelerated),
+and upserts everything into the Actian VectorAI DB.
+
+Modes:
+  full     - Generate embeddings + insert into DB in one pass (default)
+  generate - Only generate embeddings, save to .npz file (run on GPU machine)
+  insert   - Load .npz embeddings, insert into DB (run on DB machine)
 
 Usage:
-    cd backend
-    python -m scripts.ingest_recipes [--limit N] [--batch-size N]
+    python scripts/ingest_recipes.py [--limit N] [--batch-size N] [--mode full|generate|insert]
 """
 
 import json
@@ -363,17 +367,22 @@ def ingest(
         output_file = embeddings_file or os.path.join(
             os.path.dirname(data_path), "recipe_embeddings.npz"
         )
-        print(f"\nGenerating embeddings (this will take a while on CPU)...")
+        print(f"\nGenerating embeddings with local model...")
+        print(f"  (GPU will be used automatically if available)")
 
         all_vectors = []
+        t0 = time.time()
         for i in range(0, total, embedding_batch_size):
             batch_texts = all_embedding_texts[i : i + embedding_batch_size]
             vectors = gemini.generate_embeddings_batch(batch_texts)
             all_vectors.extend(vectors)
+            elapsed = time.time() - t0
+            rate = (i + len(batch_texts)) / max(elapsed, 0.1)
             print(
-                f"  Progress: {min(i + embedding_batch_size, total)}/{total}", end="\r"
+                f"  Progress: {min(i + embedding_batch_size, total)}/{total} "
+                f"({rate:.0f} recipes/sec)",
+                end="\r",
             )
-            time.sleep(0.5)  # Rate limit buffer
 
         # Save to file
         vectors_array = np.array(all_vectors, dtype=np.float32)
@@ -494,21 +503,12 @@ def ingest(
 
             # When we have enough texts, generate embeddings in batch
             if len(embedding_texts) >= embedding_batch_size or i == total - 1:
-                # Generate embeddings
-                try:
-                    vectors = gemini.generate_embeddings_batch(embedding_texts)
-                except Exception as e:
-                    # Rate limit handling: wait and retry
-                    print(f"\n  Rate limited, waiting 60s... ({e})")
-                    time.sleep(60)
-                    vectors = gemini.generate_embeddings_batch(embedding_texts)
+                # Generate embeddings (local model, no rate limits)
+                vectors = gemini.generate_embeddings_batch(embedding_texts)
 
                 batch_vectors.extend(vectors)
                 embedding_texts = []
                 embedding_indices = []
-
-                # Small delay to respect rate limits
-                time.sleep(0.5)
 
             # When batch is full, upsert to DB
             if len(batch_ids) >= batch_size or i == total - 1:
@@ -580,8 +580,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--embedding-batch-size",
         type=int,
-        default=100,
-        help="Number of texts per embedding API call (default: 100)",
+        default=256,
+        help="Number of texts per embedding batch (default: 256, higher = faster on GPU)",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["full", "generate", "insert"],
+        default="full",
+        help="Ingestion mode: 'full' (embed+insert), 'generate' (embed only, save .npz), 'insert' (load .npz, insert into DB)",
+    )
+    parser.add_argument(
+        "--embeddings-file",
+        type=str,
+        default=None,
+        help="Path to .npz file for generate/insert modes (default: data/recipe_embeddings.npz)",
     )
 
     args = parser.parse_args()
@@ -590,4 +603,6 @@ if __name__ == "__main__":
         limit=args.limit,
         batch_size=args.batch_size,
         embedding_batch_size=args.embedding_batch_size,
+        mode=args.mode,
+        embeddings_file=args.embeddings_file,
     )
