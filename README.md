@@ -1,4 +1,4 @@
-# Treat Yo' Self
+# Treat Your-shelf
 - **Hackathon:** SF Hacks 2026 (San Francisco State University)
 - **Date:** February 13–15, 2026
 - **Tracks:**
