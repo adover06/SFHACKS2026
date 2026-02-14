@@ -1,1 +1,58 @@
 @import "tailwindcss";
+
+/* ── Warm & Healthy palette tokens ── */
+:root {
+  --sage-50: #f4f7f2;
+  --sage-100: #e6ede2;
+  --sage-200: #cbd9c4;
+  --sage-300: #a8bfa0;
+  --sage-400: #7fa077;
+  --sage-500: #5e8356;
+  --sage-600: #4a6944;
+  --sage-700: #3b5337;
+  --sage-800: #2f422c;
+  --sage-900: #243322;
+  --cream: #fefcf3;
+  --cream-dark: #f5f0e1;
+}
+
+/* ── Global resets ── */
+html,
+body,
+#root {
+  min-height: 100dvh;
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background-color: var(--cream);
+  color: var(--sage-900);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Custom utilities ── */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+.animate-pulse-slow {
+  animation: pulse-slow 2s ease-in-out infinite;
+}
+
+@keyframes progress-fill {
+  0%   { width: 0%; }
+  100% { width: 100%; }
+}
+.animate-progress {
+  animation: progress-fill 3s ease-in-out forwards;
+}
+
+@keyframes fade-in-up {
+  0%   { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s ease-out forwards;
+}
+
+/* hide scrollbar on recipe row */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
