@@ -16,6 +16,7 @@ import sys
 import os
 import time
 import argparse
+import numpy as np
 
 # Add backend to path so we can import app modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -299,8 +300,16 @@ def ingest(
     limit: int | None = None,
     batch_size: int = 50,
     embedding_batch_size: int = 100,
+    mode: str = "full",
+    embeddings_file: str | None = None,
 ) -> None:
-    """Ingest recipes from JSON file into Actian VectorAI DB."""
+    """Ingest recipes from JSON file into Actian VectorAI DB.
+
+    Modes:
+      - 'full': Generate embeddings and insert into DB (default)
+      - 'generate': Only generate embeddings, save to file
+      - 'insert': Load embeddings from file, insert into DB
+    """
 
     print(f"Reading recipes from {data_path}...")
 
@@ -324,7 +333,109 @@ def ingest(
     total = len(recipes)
     print(f"Loaded {total} recipes.")
 
-    # Connect to Actian DB
+    # Build all payloads upfront (needed for all modes)
+    all_payloads = []
+    all_embedding_texts = []
+    for recipe in recipes:
+        ingredients = recipe.get("ingredients", [])
+        num_steps = recipe.get("num_steps", 0)
+
+        tag_info = infer_dietary_tags(ingredients)
+        skill = infer_skill_level(num_steps)
+
+        payload = {
+            "title": recipe.get("recipe_title", ""),
+            "description": recipe.get("description", ""),
+            "ingredients": ingredients,
+            "directions": recipe.get("directions", []),
+            "category": recipe.get("category", ""),
+            "subcategory": recipe.get("subcategory", ""),
+            "num_ingredients": recipe.get("num_ingredients", len(ingredients)),
+            "num_steps": num_steps,
+            "skill_level": skill,
+            **tag_info,
+        }
+        all_payloads.append(payload)
+        all_embedding_texts.append(build_embedding_text(recipe))
+
+    # === MODE: generate ===
+    if mode == "generate":
+        output_file = embeddings_file or os.path.join(
+            os.path.dirname(data_path), "recipe_embeddings.npz"
+        )
+        print(f"\nGenerating embeddings (this will take a while on CPU)...")
+
+        all_vectors = []
+        for i in range(0, total, embedding_batch_size):
+            batch_texts = all_embedding_texts[i : i + embedding_batch_size]
+            vectors = gemini.generate_embeddings_batch(batch_texts)
+            all_vectors.extend(vectors)
+            print(
+                f"  Progress: {min(i + embedding_batch_size, total)}/{total}", end="\r"
+            )
+            time.sleep(0.5)  # Rate limit buffer
+
+        # Save to file
+        vectors_array = np.array(all_vectors, dtype=np.float32)
+        np.savez_compressed(output_file, vectors=vectors_array)
+        print(f"\n\nSaved {total} embeddings to {output_file}")
+        print(f"  Shape: {vectors_array.shape}")
+        print(f"  File size: {os.path.getsize(output_file) / 1e6:.1f} MB")
+        return
+
+    # === MODE: insert ===
+    if mode == "insert":
+        input_file = embeddings_file or os.path.join(
+            os.path.dirname(data_path), "recipe_embeddings.npz"
+        )
+        print(f"\nLoading embeddings from {input_file}...")
+        data = np.load(input_file)
+        all_vectors = data["vectors"]
+        print(f"  Loaded {len(all_vectors)} vectors, shape: {all_vectors.shape}")
+
+        print(f"Connecting to Actian VectorAI DB at {settings.ACTIAN_DB_ADDRESS}...")
+        client = vector_db.get_client()
+        client.connect()
+
+        try:
+            vector_db.ensure_collection(client)
+
+            processed = 0
+            for i in range(0, total, batch_size):
+                batch_ids = list(range(i, min(i + batch_size, total)))
+                batch_vectors = [all_vectors[j].tolist() for j in batch_ids]
+                batch_payloads = [all_payloads[j] for j in batch_ids]
+
+                try:
+                    vector_db.batch_upsert_recipes(
+                        client, batch_ids, batch_vectors, batch_payloads
+                    )
+                except Exception as e:
+                    print(f"\n  Error upserting batch: {e}")
+                    for j, (rid, vec, pay) in enumerate(
+                        zip(batch_ids, batch_vectors, batch_payloads)
+                    ):
+                        try:
+                            vector_db.upsert_recipe(client, rid, vec, pay)
+                        except Exception as e2:
+                            print(f"    Failed recipe {rid}: {e2}")
+
+                processed += len(batch_ids)
+                pct = (processed / total) * 100
+                print(
+                    f"  Progress: {processed}/{total} ({pct:.1f}%) ",
+                    end="\r",
+                )
+
+            print(f"\n\nInsertion complete! {processed} recipes inserted.")
+            count = vector_db.get_collection_count(client)
+            print(f"Collection '{settings.COLLECTION_NAME}' now has {count} vectors.")
+
+        finally:
+            client.close()
+        return
+
+    # === MODE: full (original behavior) ===
     print(f"Connecting to Actian VectorAI DB at {settings.ACTIAN_DB_ADDRESS}...")
     client = vector_db.get_client()
     client.connect()
