@@ -1,14 +1,18 @@
 """
-LangChain agent for the Treat Your-shelf recipe recommendation pipeline.
+Treat Your-shelf recipe recommendation pipeline.
 
-The agent has two tools:
-1. analyze_pantry_image - Uses Gemini Vision to extract ingredients from an image
-2. search_recipes - Embeds ingredients + preferences, queries Actian VectorAI DB
+Two modes:
+1. Direct pipeline (default) — image → Gemini Vision → embedding → Actian search.
+   Uses only 2 Gemini API calls per request (1 vision + 1 embedding).
+2. LangChain agent mode — lets Gemini orchestrate the tools. Uses 3-4+ API calls
+   per request due to agent reasoning overhead.  Activate with USE_AGENT=true in .env.
 
-The agent orchestrates the pipeline: image -> ingredients -> vector search -> ranked recipes.
+The direct pipeline is recommended for free-tier Gemini keys (5 RPM limit on 2.5-flash).
 """
 
 import json
+import time
+import logging
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -18,105 +22,22 @@ from app.config import settings
 from app.models import UserPreferences, RecipeResult
 from app.services import gemini, vector_db
 
+logger = logging.getLogger(__name__)
 
-# ── Shared state for the current request ──
-# The agent tools need access to the image bytes and preferences
-# passed in from the FastAPI endpoint. We store them here per-invocation.
+
+# ── Shared state for the current request (used by agent tools) ──
 _current_image_bytes: bytes = b""
 _current_preferences: UserPreferences = UserPreferences()
 
 
-# ── Tools ──
+# ── Helpers ──
 
 
-@tool
-def analyze_pantry_image(placeholder: str = "") -> str:
-    """Analyze the uploaded pantry/fridge image and extract all visible
-    food ingredients. Returns a JSON list of detected ingredients with
-    names, quantities, and confidence scores."""
-    global _current_image_bytes
-
-    if not _current_image_bytes:
-        return json.dumps({"error": "No image provided"})
-
-    inventory = gemini.analyze_image(_current_image_bytes)
-    ingredients = [
-        {
-            "name": ing.name,
-            "quantity": ing.quantity,
-            "confidence": ing.confidence,
-        }
-        for ing in inventory.ingredients
-    ]
-    return json.dumps({"ingredients": ingredients})
-
-
-@tool
-def search_recipes(ingredients_json: str) -> str:
-    """Search for recipes that match the detected ingredients and user
-    preferences. Takes a JSON string containing a list of ingredient names.
-    Returns matching recipes ranked by similarity.
-
-    Args:
-        ingredients_json: JSON string like '{"ingredients": ["chicken", "rice", "garlic"]}'
-    """
-    global _current_preferences
-
-    # Parse ingredients
-    try:
-        data = json.loads(ingredients_json)
-        if isinstance(data, dict):
-            ingredient_names = [
-                i["name"] if isinstance(i, dict) else i
-                for i in data.get("ingredients", [])
-            ]
-        elif isinstance(data, list):
-            ingredient_names = [i["name"] if isinstance(i, dict) else i for i in data]
-        else:
-            ingredient_names = []
-    except (json.JSONDecodeError, KeyError):
-        ingredient_names = []
-
-    if not ingredient_names:
-        return json.dumps({"error": "No ingredients provided to search"})
-
-    # Build the search query text from ingredients + preferences
-    query_parts = ["Ingredients: " + ", ".join(ingredient_names)]
-
-    if _current_preferences.cuisine_preferences:
-        query_parts.append(
-            "Cuisine: " + ", ".join(_current_preferences.cuisine_preferences)
-        )
-    if _current_preferences.meal_type:
-        query_parts.append(f"Meal type: {_current_preferences.meal_type}")
-    if _current_preferences.additional_prompt:
-        query_parts.append(_current_preferences.additional_prompt)
-
-    query_text = ". ".join(query_parts)
-
-    # Generate embedding for the search query
-    query_vector = gemini.generate_embedding(query_text)
-
-    # Build filters from preferences
-    db_filter = vector_db.build_recipe_filter(
-        dietary_restrictions=_current_preferences.dietary_restrictions or None,
-        skill_level=_current_preferences.skill_level,
-    )
-
-    # Search Actian VectorAI DB
-    client = vector_db.get_client()
-    try:
-        client.connect()
-        results = vector_db.search_recipes(
-            client,
-            query_vector=query_vector,
-            top_k=10,
-            filter_obj=db_filter,
-        )
-    finally:
-        client.close()
-
-    # Format results
+def _format_results(
+    results: list[dict],
+    ingredient_names: list[str],
+) -> list[dict]:
+    """Convert raw Actian search results into the frontend RecipeResult format."""
     recipes = []
     for r in results:
         payload = r.get("payload", {})
@@ -131,7 +52,6 @@ def search_recipes(ingredients_json: str) -> str:
                 raw_ingredients = [raw_ingredients]
 
         # Calculate pantry match percentage
-        # Count how many detected ingredients appear in the recipe
         recipe_ing_lower = [i.lower() for i in raw_ingredients]
         detected_lower = [i.lower() for i in ingredient_names]
         matches = sum(
@@ -140,7 +60,6 @@ def search_recipes(ingredients_json: str) -> str:
         total_recipe_ings = max(len(raw_ingredients), 1)
         match_pct = min(int((matches / total_recipe_ings) * 100), 100)
 
-        # Boost match percentage by vector similarity score
         # Blend: 40% ingredient overlap + 60% vector similarity
         vector_match = int(score * 100)
         blended_match = int(0.4 * match_pct + 0.6 * vector_match)
@@ -168,22 +87,148 @@ def search_recipes(ingredients_json: str) -> str:
             }
         )
 
-    # Sort by match score descending
     recipes.sort(key=lambda x: x["match"], reverse=True)
+    return recipes
 
+
+def _search_with_preferences(
+    ingredient_names: list[str],
+    preferences: UserPreferences,
+) -> list[dict]:
+    """Build query, embed it, search Actian DB, return formatted recipes."""
+    # Build query text
+    query_parts = ["Ingredients: " + ", ".join(ingredient_names)]
+    if preferences.cuisine_preferences:
+        query_parts.append("Cuisine: " + ", ".join(preferences.cuisine_preferences))
+    if preferences.meal_type:
+        query_parts.append(f"Meal type: {preferences.meal_type}")
+    if preferences.additional_prompt:
+        query_parts.append(preferences.additional_prompt)
+
+    query_text = ". ".join(query_parts)
+
+    # Generate embedding (1 API call)
+    query_vector = gemini.generate_embedding(query_text)
+
+    # Build filters
+    db_filter = vector_db.build_recipe_filter(
+        dietary_restrictions=preferences.dietary_restrictions or None,
+        skill_level=preferences.skill_level,
+    )
+
+    # Search Actian VectorAI DB
+    client = vector_db.get_client()
+    try:
+        client.connect()
+        results = vector_db.search_recipes(
+            client,
+            query_vector=query_vector,
+            top_k=10,
+            filter_obj=db_filter,
+        )
+    finally:
+        client.close()
+
+    return _format_results(results, ingredient_names)
+
+
+# ── Direct Pipeline (default) ──
+
+
+def run_direct_pipeline(
+    image_bytes: bytes,
+    preferences: UserPreferences,
+) -> dict:
+    """Run the direct pipeline: image → ingredients → recipes.
+
+    Uses exactly 2 Gemini API calls: 1 vision + 1 embedding.
+    No LangChain agent overhead.
+    """
+    # Step 1: Analyze image (1 Gemini API call)
+    logger.info("Analyzing image with Gemini Vision...")
+    inventory = gemini.analyze_image(image_bytes)
+    ingredient_names = [ing.name for ing in inventory.ingredients]
+    logger.info(f"Detected {len(ingredient_names)} ingredients: {ingredient_names}")
+
+    if not ingredient_names:
+        return {"detected_ingredients": [], "recipes": []}
+
+    # Step 2: Search recipes (1 Gemini embedding call + Actian DB query)
+    logger.info("Searching recipes in Actian VectorAI DB...")
+    recipes = _search_with_preferences(ingredient_names, preferences)
+    logger.info(f"Found {len(recipes)} matching recipes")
+
+    return {
+        "detected_ingredients": ingredient_names,
+        "recipes": recipes,
+    }
+
+
+# ── LangChain Agent Mode (optional, set USE_AGENT=true) ──
+
+
+@tool
+def analyze_pantry_image(placeholder: str = "") -> str:
+    """Analyze the uploaded pantry/fridge image and extract all visible
+    food ingredients. Returns a JSON list of detected ingredients with
+    names, quantities, and confidence scores."""
+    global _current_image_bytes
+
+    if not _current_image_bytes:
+        return json.dumps({"error": "No image provided"})
+
+    inventory = gemini.analyze_image(_current_image_bytes)
+    ingredients = [
+        {
+            "name": ing.name,
+            "quantity": ing.quantity,
+            "confidence": ing.confidence,
+        }
+        for ing in inventory.ingredients
+    ]
+    return json.dumps({"ingredients": ingredients})
+
+
+@tool
+def search_recipes_tool(ingredients_json: str) -> str:
+    """Search for recipes that match the detected ingredients and user
+    preferences. Takes a JSON string containing a list of ingredient names.
+    Returns matching recipes ranked by similarity.
+
+    Args:
+        ingredients_json: JSON string like '{"ingredients": ["chicken", "rice", "garlic"]}'
+    """
+    global _current_preferences
+
+    try:
+        data = json.loads(ingredients_json)
+        if isinstance(data, dict):
+            ingredient_names = [
+                i["name"] if isinstance(i, dict) else i
+                for i in data.get("ingredients", [])
+            ]
+        elif isinstance(data, list):
+            ingredient_names = [i["name"] if isinstance(i, dict) else i for i in data]
+        else:
+            ingredient_names = []
+    except (json.JSONDecodeError, KeyError):
+        ingredient_names = []
+
+    if not ingredient_names:
+        return json.dumps({"error": "No ingredients provided to search"})
+
+    recipes = _search_with_preferences(ingredient_names, _current_preferences)
     return json.dumps({"recipes": recipes})
 
-
-# ── Agent Setup ──
 
 SYSTEM_PROMPT = """You are a helpful recipe recommendation assistant for the "Treat Your-shelf" app.
 
 Your job is to:
 1. First, analyze the user's pantry/fridge image using the analyze_pantry_image tool to detect ingredients.
-2. Then, search for matching recipes using the search_recipes tool, passing the detected ingredients.
+2. Then, search for matching recipes using the search_recipes_tool tool, passing the detected ingredients.
 3. Return the final results.
 
-Always call analyze_pantry_image first, then pass the results to search_recipes.
+Always call analyze_pantry_image first, then pass the results to search_recipes_tool.
 Be concise and direct. Return the tool outputs without excessive commentary.
 """
 
@@ -204,7 +249,7 @@ def _create_agent() -> AgentExecutor:
         temperature=0,
     )
 
-    tools = [analyze_pantry_image, search_recipes]
+    tools = [analyze_pantry_image, search_recipes_tool]
     agent = create_tool_calling_agent(llm, tools, PROMPT)
 
     return AgentExecutor(
@@ -216,24 +261,15 @@ def _create_agent() -> AgentExecutor:
     )
 
 
-def run_agent(
+def run_agent_mode(
     image_bytes: bytes,
     preferences: UserPreferences,
 ) -> dict:
-    """Run the recipe recommendation agent.
-
-    Args:
-        image_bytes: Raw bytes of the pantry/fridge image.
-        preferences: User's dietary and cuisine preferences.
-
-    Returns:
-        Dict with 'detected_ingredients' and 'recipes' keys.
-    """
+    """Run the LangChain agent pipeline. Uses 3-4+ Gemini API calls."""
     global _current_image_bytes, _current_preferences
     _current_image_bytes = image_bytes
     _current_preferences = preferences
 
-    # Build the user message
     parts = [
         "I've uploaded a photo of my pantry/fridge. Please analyze it and find me recipes."
     ]
@@ -256,21 +292,14 @@ def run_agent(
 
     user_input = "\n".join(parts)
 
-    # Run the agent
     executor = _create_agent()
     result = executor.invoke({"input": user_input})
 
-    # Parse out the structured data from the agent's tool calls
-    # The agent output will contain the search_recipes result
     output_text = result.get("output", "")
-
-    # Try to extract structured data
     detected_ingredients = []
     recipes = []
 
-    # The agent stores intermediate results; parse from tool outputs
     try:
-        # Try parsing the output as JSON first
         parsed = json.loads(output_text)
         if isinstance(parsed, dict):
             recipes = parsed.get("recipes", [])
@@ -281,22 +310,11 @@ def run_agent(
     except json.JSONDecodeError:
         pass
 
-    # If we couldn't get structured data from output, run tools directly as fallback
+    # Fallback to direct pipeline if agent didn't return structured data
     if not recipes:
-        # Direct pipeline fallback (no agent overhead)
-        inventory = gemini.analyze_image(image_bytes)
-        detected_ingredients = [ing.name for ing in inventory.ingredients]
+        return run_direct_pipeline(image_bytes, preferences)
 
-        if detected_ingredients:
-            search_input = json.dumps({"ingredients": detected_ingredients})
-            search_result = search_recipes.invoke(search_input)
-            try:
-                search_data = json.loads(search_result)
-                recipes = search_data.get("recipes", [])
-            except json.JSONDecodeError:
-                pass
-    elif not detected_ingredients:
-        # We got recipes but missed ingredients - extract from agent steps
+    if not detected_ingredients:
         inventory = gemini.analyze_image(image_bytes)
         detected_ingredients = [ing.name for ing in inventory.ingredients]
 
@@ -304,3 +322,25 @@ def run_agent(
         "detected_ingredients": detected_ingredients,
         "recipes": recipes,
     }
+
+
+# ── Public Entry Point ──
+
+
+def run_agent(
+    image_bytes: bytes,
+    preferences: UserPreferences,
+) -> dict:
+    """Run the recipe recommendation pipeline.
+
+    Uses direct pipeline by default (2 API calls).
+    Set USE_AGENT=true in .env to use the LangChain agent instead (3-4+ API calls).
+    """
+    use_agent = settings.USE_AGENT
+
+    if use_agent:
+        logger.info("Using LangChain agent mode")
+        return run_agent_mode(image_bytes, preferences)
+    else:
+        logger.info("Using direct pipeline mode")
+        return run_direct_pipeline(image_bytes, preferences)
