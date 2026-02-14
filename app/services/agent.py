@@ -111,10 +111,15 @@ def _search_with_preferences(
     query_vector = gemini.generate_embedding(query_text)
 
     # Build filters
-    db_filter = vector_db.build_recipe_filter(
-        dietary_restrictions=preferences.dietary_restrictions or None,
-        skill_level=preferences.skill_level,
-    )
+    if settings.RELAXED_MATCHING:
+        # In relaxed mode, we skip hard DB filters so we always get results
+        # (sorting will still favor relevant recipes via vector similarity)
+        db_filter = None
+    else:
+        db_filter = vector_db.build_recipe_filter(
+            dietary_restrictions=preferences.dietary_restrictions or None,
+            skill_level=preferences.skill_level,
+        )
 
     # Search Actian VectorAI DB
     client = vector_db.get_client()

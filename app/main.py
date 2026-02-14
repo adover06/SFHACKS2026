@@ -107,9 +107,12 @@ async def scan_pantry(
     try:
         result = run_agent(image_bytes, user_prefs)
     except Exception as e:
+        import traceback
+        tb_str = traceback.format_exc()
+        print(tb_str)  # Log to server console
         raise HTTPException(
             status_code=500,
-            detail=f"Recipe search failed: {e}",
+            detail=f"Recipe search failed: {e}\nTraceback:\n{tb_str}",
         )
 
     # Build response

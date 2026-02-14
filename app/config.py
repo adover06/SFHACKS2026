@@ -11,7 +11,8 @@ class Settings:
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "3072"))
     GEMINI_MODEL: str = "gemini-2.5-flash"
     EMBEDDING_MODEL: str = "gemini-embedding-001"
-    USE_AGENT: bool = os.getenv("USE_AGENT", "false").lower() == "true"
+    USE_AGENT: bool = os.getenv("USE_AGENT", "false").lower() == "false"
+    RELAXED_MATCHING: bool = os.getenv("RELAXED_MATCHING", "true").lower() == "true"
 
 
 settings = Settings()

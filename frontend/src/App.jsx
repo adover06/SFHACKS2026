@@ -55,7 +55,7 @@ function HomeScreen({ onScan }) {
       {/* hero */}
       <div className="flex flex-col items-center gap-4 animate-fade-in-up">
         <div className="w-20 h-20 rounded-full flex items-center justify-center"
-             style={{ backgroundColor: "var(--sage-200)" }}>
+          style={{ backgroundColor: "var(--sage-200)" }}>
           <Leaf size={40} style={{ color: "var(--sage-600)" }} />
         </div>
         <h1
@@ -92,7 +92,7 @@ function CameraScreen({ onCapture, onBack }) {
     const file = e.target.files?.[0];
     if (file) {
       const url = URL.createObjectURL(file);
-      onCapture(url);
+      onCapture(file, url);
     }
   };
 
@@ -261,7 +261,7 @@ function RecipeCard({ recipe }) {
 }
 
 /* ───── Results Screen ───── */
-function ResultsScreen({ onReset }) {
+function ResultsScreen({ recipes, ingredients, onReset }) {
   return (
     <div className="min-h-dvh px-6 py-10 flex flex-col gap-6 animate-fade-in-up">
       {/* header */}
@@ -279,14 +279,38 @@ function ResultsScreen({ onReset }) {
         <div className="w-10" /> {/* spacer */}
       </div>
 
+      {/* detected ingredients (debug info) */}
+      <div className="px-1">
+        <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--sage-500)" }}>
+          Based on:
+        </p>
+        {ingredients && ingredients.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {ingredients.map((ing) => (
+              <span
+                key={ing}
+                className="px-3 py-1 rounded-full text-sm font-medium"
+                style={{ backgroundColor: "var(--sage-100)", color: "var(--sage-700)" }}
+              >
+                {ing}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm italic" style={{ color: "var(--sage-600)" }}>
+            No ingredients detected. Try a clearer photo.
+          </p>
+        )}
+      </div>
+
       <p className="text-sm" style={{ color: "var(--sage-600)" }}>
         <UtensilsCrossed size={16} className="inline mr-1 -mt-0.5" />
-        We found <strong>{MOCK_RECIPES.length} recipes</strong> from your pantry items.
+        We found <strong>{recipes.length} recipes</strong> from your pantry items.
       </p>
 
       {/* horizontal scroll list */}
       <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-6 px-6">
-        {MOCK_RECIPES.map((r) => (
+        {recipes.map((r) => (
           <RecipeCard key={r.id} recipe={r} />
         ))}
       </div>
@@ -310,18 +334,51 @@ function ResultsScreen({ onReset }) {
 export default function App() {
   const [screen, setScreen] = useState("home"); // home | camera | loading | results
   const [imageUrl, setImageUrl] = useState(null);
+  const [recipes, setRecipes] = useState([]);
+  const [detectedIngredients, setDetectedIngredients] = useState([]);
+  const [error, setError] = useState(null);
 
-  /* After a photo is captured, show loading for 3 s then results */
-  const handleCapture = (url) => {
+  /* After a photo is captured, upload to API */
+  const handleCapture = async (file, url) => {
     setImageUrl(url);
     setScreen("loading");
-  };
+    setError(null);
 
-  useEffect(() => {
-    if (screen !== "loading") return;
-    const timer = setTimeout(() => setScreen("results"), 3200);
-    return () => clearTimeout(timer);
-  }, [screen]);
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append(
+      "preferences",
+      JSON.stringify({
+        dietary_restrictions: [],
+        cuisine_preferences: [],
+        meal_type: "dinner",
+        skill_level: "beginner",
+        additional_prompt: "something quick",
+      })
+    );
+
+    try {
+      const res = await fetch("http://localhost:8000/api/scan", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || "Scan failed");
+      }
+
+      const data = await res.json();
+      setRecipes(data.recipes);
+      setDetectedIngredients(data.detected_ingredients);
+      setScreen("results");
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+      alert(`Error scanning pantry: ${err.message}`);
+      setScreen("home");
+    }
+  };
 
   const handleReset = () => {
     setImageUrl(null);
@@ -335,7 +392,13 @@ export default function App() {
         <CameraScreen onCapture={handleCapture} onBack={() => setScreen("home")} />
       )}
       {screen === "loading" && <LoadingScreen imageUrl={imageUrl} />}
-      {screen === "results" && <ResultsScreen onReset={handleReset} />}
+      {screen === "results" && (
+        <ResultsScreen
+          recipes={recipes}
+          ingredients={detectedIngredients}
+          onReset={handleReset}
+        />
+      )}
     </div>
   );
 }
