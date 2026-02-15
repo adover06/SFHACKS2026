@@ -72,6 +72,15 @@ html, body, #root {
   box-shadow: 0 0 40px var(--glow), 0 0 80px rgba(74, 124, 58, 0.08);
 }
 
+/* ── Hero icon ring ── */
+.hero-icon-ring {
+  background: var(--sage-100);
+  box-shadow:
+    0 0 0 8px rgba(74, 124, 58, 0.06),
+    0 0 0 20px rgba(74, 124, 58, 0.03),
+    0 0 40px var(--glow);
+}
+
 /* ── Stagger entrance ── */
 @keyframes stagger-in {
   0%   { opacity: 0; transform: translateY(18px) scale(0.98); }

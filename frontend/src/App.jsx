@@ -108,7 +108,7 @@ const GoogleIcon = () => (
 );
 
 /* ═══════════════════════════════════════════════════
-   Login Screen
+   Hero / Login Screen
    ═══════════════════════════════════════════════════ */
 function LoginScreen({ onGuest }) {
   const [busy, setBusy] = useState(false);
@@ -119,7 +119,6 @@ function LoginScreen({ onGuest }) {
     setError(null);
     try {
       await signInWithPopup(auth, provider);
-      /* onAuthStateChanged in App handles the redirect logic */
     } catch (err) {
       if (
         err.code === "auth/popup-blocked" ||
@@ -137,62 +136,100 @@ function LoginScreen({ onGuest }) {
     }
   };
 
+  const steps = [
+    { icon: <ClipboardList size={22} />, label: "Personalize", desc: "Set your diet prefs" },
+    { icon: <Camera size={22} />, label: "Snap", desc: "Photo your pantry" },
+    { icon: <ChefHat size={22} />, label: "Cook", desc: "Get matched recipes" },
+  ];
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-dvh px-6 gap-10 bg-pantry">
-      <div className="flex flex-col items-center gap-5 stagger-1">
-        <div
-          className="w-24 h-24 rounded-full flex items-center justify-center glow-circle"
-          style={{ backgroundColor: "var(--sage-100)" }}
-        >
-          <Leaf size={48} style={{ color: "var(--sage-500)" }} />
+    <div className="flex flex-col min-h-dvh bg-pantry">
+      {/* ── Hero section ── */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 pt-16 pb-6">
+        {/* Icon */}
+        <div className="stagger-1 hero-icon-ring w-20 h-20 rounded-full flex items-center justify-center mb-6">
+          <Leaf size={40} strokeWidth={1.8} style={{ color: "var(--sage-500)" }} />
         </div>
-        <div className="flex flex-col items-center gap-2">
-          <h1
-            className="font-display text-5xl sm:text-6xl font-bold text-center leading-tight tracking-tight"
-            style={{ color: "var(--sage-800)" }}
-          >
-            Treat Your‑shelf
-          </h1>
-          <div className="w-12 h-1 rounded-full" style={{ backgroundColor: "var(--sage-400)" }} />
-          <p className="text-center max-w-xs text-base mt-1" style={{ color: "var(--sage-600)" }}>
-            Snap your pantry, discover healthy recipes.
-          </p>
+
+        {/* Title */}
+        <h1
+          className="stagger-2 font-display text-5xl sm:text-6xl font-bold text-center leading-[1.1] tracking-tight"
+          style={{ color: "var(--sage-800)" }}
+        >
+          Treat<br />Your‑shelf
+        </h1>
+
+        {/* Accent line */}
+        <div
+          className="stagger-2 w-10 h-1 rounded-full mt-4 mb-4"
+          style={{ backgroundColor: "var(--sage-400)" }}
+        />
+
+        {/* Tagline */}
+        <p
+          className="stagger-3 text-center text-lg max-w-[280px] leading-relaxed"
+          style={{ color: "var(--sage-600)" }}
+        >
+          Turn what you have into something delicious.
+        </p>
+
+        {/* ── Steps ── */}
+        <div className="stagger-4 flex items-center gap-3 mt-10">
+          {steps.map((s, i) => (
+            <div key={s.label} className="flex items-center gap-3">
+              <div className="flex flex-col items-center gap-1.5">
+                <div
+                  className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                  style={{ backgroundColor: "var(--sage-100)", color: "var(--sage-600)" }}
+                >
+                  {s.icon}
+                </div>
+                <span className="text-xs font-bold tracking-wide" style={{ color: "var(--sage-700)" }}>
+                  {s.label}
+                </span>
+                <span className="text-[10px] leading-tight" style={{ color: "var(--sage-400)" }}>
+                  {s.desc}
+                </span>
+              </div>
+              {i < steps.length - 1 && (
+                <div
+                  className="w-6 h-px -mt-4"
+                  style={{ backgroundColor: "var(--sage-300)" }}
+                />
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
-      <div className="w-full max-w-xs flex flex-col gap-3 stagger-2">
-        <button
-          onClick={handleGoogle}
-          disabled={busy}
-          className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl text-lg font-semibold shadow-lg active:scale-[.97] transition-all btn-glow disabled:opacity-60"
-          style={{ backgroundColor: "var(--sage-500)", color: "white" }}
-        >
-          <GoogleIcon />
-          {busy ? "Signing in…" : "Sign in with Google"}
-        </button>
+      {/* ── CTA section ── */}
+      <div className="px-6 pb-10">
+        <div className="stagger-5 w-full max-w-sm mx-auto flex flex-col gap-3">
+          <button
+            onClick={handleGoogle}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl text-lg font-semibold shadow-lg active:scale-[.97] transition-all btn-glow disabled:opacity-60"
+            style={{ backgroundColor: "var(--sage-500)", color: "white" }}
+          >
+            <GoogleIcon />
+            {busy ? "Signing in…" : "Sign in with Google"}
+          </button>
 
-        {/* divider */}
-        <div className="flex items-center gap-3 my-1">
-          <div className="flex-1 h-px" style={{ backgroundColor: "var(--sage-200)" }} />
-          <span className="text-xs font-medium" style={{ color: "var(--sage-400)" }}>or</span>
-          <div className="flex-1 h-px" style={{ backgroundColor: "var(--sage-200)" }} />
+          <button
+            onClick={onGuest}
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-base font-medium active:scale-[.97] transition-transform"
+            style={{ color: "var(--sage-500)" }}
+          >
+            Continue as Guest
+            <ArrowLeft size={16} className="rotate-180" style={{ color: "var(--sage-400)" }} />
+          </button>
+
+          {error && (
+            <p className="text-center text-sm font-medium" style={{ color: "#c44" }}>
+              {error}
+            </p>
+          )}
         </div>
-
-        {/* Guest */}
-        <button
-          onClick={onGuest}
-          className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl text-lg font-semibold active:scale-[.97] transition-transform"
-          style={{ backgroundColor: "var(--cream-dark)", color: "var(--sage-700)", border: "2px solid var(--sage-200)" }}
-        >
-          <UserRound size={22} />
-          Continue as Guest
-        </button>
-
-        {error && (
-          <p className="text-center text-sm font-medium" style={{ color: "#c44" }}>
-            {error}
-          </p>
-        )}
       </div>
     </div>
   );
@@ -699,15 +736,11 @@ export default function App() {
       )}
 
       {screen === "favorites" && (
-        <Suspense fallback={<LazyFallback />}>
-          <FavoritesScreen
-            user={user}
-            isGuest={isGuest}
-            allRecipes={MOCK_RECIPES}
-            onBack={() => setScreen("home")}
-            onRemove={removeFavorite}
-          />
-        </Suspense>
+        <FavoritesScreen
+          favorites={recipes.filter((r) => favoriteIds.includes(r.id))}
+          onBack={() => setScreen("home")}
+          onRemove={removeFavorite}
+        />
       )}
 
       {screen === "camera" && (

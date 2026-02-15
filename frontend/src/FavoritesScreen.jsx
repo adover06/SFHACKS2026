@@ -1,7 +1,4 @@
-import { useState, useEffect } from "react";
-import { ArrowLeft, Heart, ChefHat, Check, Loader } from "lucide-react";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "./firebase";
+import { ArrowLeft, Heart, ChefHat, Check } from "lucide-react";
 
 /* ───── single favorite card ───── */
 function FavoriteCard({ recipe, onRemove }) {
@@ -60,36 +57,7 @@ function FavoriteCard({ recipe, onRemove }) {
 }
 
 /* ───── Favorites Screen ───── */
-export default function FavoritesScreen({ user, isGuest, allRecipes, onBack, onRemove }) {
-  const [favorites, setFavorites] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  /* Fetch favorite IDs from Firestore, then resolve against allRecipes */
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        if (!isGuest && user?.uid) {
-          const snap = await getDoc(doc(db, "users", user.uid));
-          if (snap.exists()) {
-            const ids = snap.data().favorites ?? [];
-            const matched = allRecipes.filter((r) => ids.includes(r.id));
-            if (!cancelled) setFavorites(matched);
-          }
-        }
-      } catch (err) {
-        console.error("Error loading favorites:", err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    load();
-    return () => { cancelled = true; };
-  }, [user, isGuest, allRecipes]);
-
+export default function FavoritesScreen({ favorites, onBack, onRemove }) {
   return (
     <div className="min-h-dvh px-6 py-10 flex flex-col gap-6 bg-pantry animate-fade-in-up">
       {/* header */}
@@ -108,11 +76,7 @@ export default function FavoritesScreen({ user, isGuest, allRecipes, onBack, onR
       </div>
 
       {/* body */}
-      {loading ? (
-        <div className="flex-1 flex items-center justify-center">
-          <Loader size={36} className="animate-spin" style={{ color: "var(--sage-400)" }} />
-        </div>
-      ) : favorites.length === 0 ? (
+      {favorites.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
           <Heart size={48} style={{ color: "var(--sage-300)" }} />
           <p className="text-center max-w-[260px]" style={{ color: "var(--sage-500)" }}>
@@ -122,14 +86,7 @@ export default function FavoritesScreen({ user, isGuest, allRecipes, onBack, onR
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-4">
           {favorites.map((r) => (
-            <FavoriteCard
-              key={r.id}
-              recipe={r}
-              onRemove={(id) => {
-                onRemove(id);
-                setFavorites((prev) => prev.filter((f) => f.id !== id));
-              }}
-            />
+            <FavoriteCard key={r.id} recipe={r} onRemove={onRemove} />
           ))}
         </div>
       )}
