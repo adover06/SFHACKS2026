@@ -11,11 +11,16 @@ Usage:
 """
 
 import json
+import time
+import logging
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import UserPreferences, ScanResponse, RecipeResult
 from app.services.agent import run_agent
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
     title="Treat Your-shelf API",
@@ -23,16 +28,11 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS — allow the Vite frontend (default port 5173) and common dev ports
+# CORS — allow all origins during development so Tailscale / ngrok / etc. work.
+# For production, lock this down to specific domains.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:5174",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,8 +49,12 @@ async def health():
     return {"status": "ok"}
 
 
+# NOTE: This is intentionally a regular `def` (not `async def`) so that
+# FastAPI automatically runs it in a thread-pool.  The Gemini SDK calls
+# inside run_agent() are synchronous and would block the event loop if
+# this were declared as `async def`.
 @app.post("/api/scan", response_model=ScanResponse)
-async def scan_pantry(
+def scan_pantry(
     image: UploadFile = File(..., description="Photo of pantry or fridge"),
     preferences: str = Form(
         default="{}",
@@ -89,7 +93,7 @@ async def scan_pantry(
         )
 
     # Read image bytes
-    image_bytes = await image.read()
+    image_bytes = image.file.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Empty image file")
 
@@ -105,11 +109,15 @@ async def scan_pantry(
 
     # Run the agent pipeline
     try:
+        start = time.time()
+        logger.info("Starting recipe pipeline…")
         result = run_agent(image_bytes, user_prefs)
+        elapsed = time.time() - start
+        logger.info(f"Pipeline finished in {elapsed:.1f}s")
     except Exception as e:
         import traceback
         tb_str = traceback.format_exc()
-        print(tb_str)  # Log to server console
+        logger.error(f"Pipeline failed:\n{tb_str}")
         raise HTTPException(
             status_code=500,
             detail=f"Recipe search failed: {e}\nTraceback:\n{tb_str}",

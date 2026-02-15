@@ -95,46 +95,18 @@ def _search_with_preferences(
     ingredient_names: list[str],
     preferences: UserPreferences,
 ) -> list[dict]:
-    """Build query, embed it, search Actian DB, return formatted recipes."""
-    # Build query text
-    query_parts = ["Ingredients: " + ", ".join(ingredient_names)]
-    if preferences.cuisine_preferences:
-        query_parts.append("Cuisine: " + ", ".join(preferences.cuisine_preferences))
-    if preferences.meal_type:
-        query_parts.append(f"Meal type: {preferences.meal_type}")
-    if preferences.additional_prompt:
-        query_parts.append(preferences.additional_prompt)
+    """Generate recipes using Gemini directly, bypassing the vector DB."""
+    # Build query text for logging purposes
+    logger.info(f"Generating recipes for ingredients: {ingredient_names}")
 
-    query_text = ". ".join(query_parts)
-
-    # Generate embedding (1 API call)
-    query_vector = gemini.generate_embedding(query_text)
-
-    # Build filters
-    if settings.RELAXED_MATCHING:
-        # In relaxed mode, we skip hard DB filters so we always get results
-        # (sorting will still favor relevant recipes via vector similarity)
-        db_filter = None
-    else:
-        db_filter = vector_db.build_recipe_filter(
-            dietary_restrictions=preferences.dietary_restrictions or None,
-            skill_level=preferences.skill_level,
-        )
-
-    # Search Actian VectorAI DB
-    client = vector_db.get_client()
+    # Directly generate recipes using the LLM
     try:
-        client.connect()
-        results = vector_db.search_recipes(
-            client,
-            query_vector=query_vector,
-            top_k=10,
-            filter_obj=db_filter,
-        )
-    finally:
-        client.close()
-
-    return _format_results(results, ingredient_names)
+        recipes = gemini.generate_recipes(ingredient_names, preferences)
+        return recipes
+    except Exception as e:
+        logger.error(f"Failed to generate recipes: {e}", exc_info=True)
+        # Return empty list instead of crashing
+        return []
 
 
 # ── Direct Pipeline (default) ──
@@ -250,7 +222,7 @@ def _create_agent() -> AgentExecutor:
     """Create a new LangChain agent with Gemini as the LLM backbone."""
     llm = ChatGoogleGenerativeAI(
         model=settings.GEMINI_MODEL,
-        google_api_key=settings.GEMINI_API_KEY,
+        google_api_key="AIzaSyAv2UyI76MeSW1swHFP3e3v-7la1MLFdvA",
         temperature=0,
     )
 

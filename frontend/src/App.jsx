@@ -76,9 +76,9 @@ function toBackendPreferences(raw) {
 
   return {
     dietary_restrictions: toList(raw.dietary),
-    allergies:            toList(raw.allergies),
-    cuisine_preferences:  toList(raw.cuisine),
-    additional_prompt:    raw.goal?.trim() || null,
+    allergies: toList(raw.allergies),
+    cuisine_preferences: toList(raw.cuisine),
+    additional_prompt: raw.goal?.trim() || null,
   };
 }
 
@@ -87,8 +87,13 @@ function toBackendPreferences(raw) {
    multipart/form-data (matches FastAPI endpoint)
    ═══════════════════════════════════════════════════ */
 async function fetchRecipes(base64Images, preferences) {
+  /* Build the API URL dynamically so it works from any device:
+     - VITE_API_URL env var takes priority if set
+     - Otherwise, use the same hostname the page was loaded from
+       (handles localhost, Tailscale IPs, ngrok, etc.) */
   const API_URL =
-    import.meta.env.VITE_API_URL || "http://localhost:8000/api/scan";
+    import.meta.env.VITE_API_URL ||
+    `${window.location.protocol}//${window.location.hostname}:8000/api/scan`;
 
   const formData = new FormData();
 
@@ -733,7 +738,7 @@ export default function App() {
       try {
         const data = await Promise.race([
           fetchRecipes(base64Images, preferences),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("Request timed out — the server may be busy. Try again.")), 60000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("Request timed out — the server may be busy. Try again.")), 120000)),
         ]);
         if (!cancelled) {
           setDetectedIngredients(data.detected_ingredients ?? []);

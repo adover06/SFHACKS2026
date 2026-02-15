@@ -63,3 +63,7 @@ class RecipeResult(BaseModel):
 class ScanResponse(BaseModel):
     detected_ingredients: list[str]
     recipes: list[RecipeResult]
+
+
+class RecipeList(BaseModel):
+    recipes: list[RecipeResult]
