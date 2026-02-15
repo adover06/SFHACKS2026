@@ -18,6 +18,7 @@ def check_count():
         
         print("Checking count...")
         try:
+            vector_db.ensure_collection(client)
             count = vector_db.get_collection_count(client)
             print(f"Total recipes in DB: {count}")
         except Exception as e:

@@ -93,7 +93,7 @@ async function fetchRecipes(base64Images, preferences) {
        (handles localhost, Tailscale IPs, ngrok, etc.) */
   const API_URL =
     import.meta.env.VITE_API_URL ||
-    `${window.location.protocol}//${window.location.hostname}:8000/api/scan`;
+    `https://andrews-macbook-air-2.taila858f9.ts.net/api/scan`;
 
   const formData = new FormData();
 
