@@ -7,4 +7,5 @@ actian-vectorAI-db-beta/
 node_modules/
 data/*.json
 data/*.csv
-firebase.js
+# firebase.js — safe to commit now, keys moved to .env.local
+.env.local
