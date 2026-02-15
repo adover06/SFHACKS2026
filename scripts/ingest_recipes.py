@@ -463,6 +463,16 @@ def ingest(
         batch_vectors = []
         batch_payloads = []
 
+        # Check existing count to resume
+        start_index = 0
+        try:
+            start_index = vector_db.get_collection_count(client)
+            if start_index > 0:
+                print(f"Found {start_index} existing recipes. Resuming from index {start_index}...")
+                processed = start_index  # Update processed count so progress bar is accurate
+        except Exception as e:
+            print(f"Could not check existing count (starting from 0): {e}")
+
         # Accumulate texts for embedding batches
         embedding_texts = []
         embedding_indices = []  # Track which recipe index each text belongs to
@@ -473,6 +483,9 @@ def ingest(
         )
 
         for i, recipe in enumerate(recipes):
+            if i < start_index:
+                continue
+
             # Build payload with auto-inferred tags
             ingredients = recipe.get("ingredients", [])
             num_steps = recipe.get("num_steps", 0)
