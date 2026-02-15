@@ -95,18 +95,76 @@ def _search_with_preferences(
     ingredient_names: list[str],
     preferences: UserPreferences,
 ) -> list[dict]:
-    """Generate recipes using Gemini directly, bypassing the vector DB."""
-    # Build query text for logging purposes
-    logger.info(f"Generating recipes for ingredients: {ingredient_names}")
+    """Search for recipes in Actian VectorAI DB using semantic similarity.
 
-    # Directly generate recipes using the LLM
+    Steps:
+      1. Build a query string from ingredients + preferences
+      2. Embed the query using the local sentence-transformers model (no API call)
+      3. Search Actian VectorAI DB for similar recipe vectors
+      4. Format results for the frontend
+
+    Falls back to Gemini LLM generation if the vector DB is unreachable.
+    """
+    # Build a rich query string for embedding
+    query_parts = [f"Recipe with: {', '.join(ingredient_names)}"]
+    if preferences.cuisine_preferences:
+        query_parts.append(f"Cuisine: {', '.join(preferences.cuisine_preferences)}")
+    if preferences.meal_type:
+        query_parts.append(f"Meal type: {preferences.meal_type}")
+    if preferences.dietary_restrictions:
+        query_parts.append(f"Dietary: {', '.join(preferences.dietary_restrictions)}")
+    if preferences.additional_prompt:
+        query_parts.append(preferences.additional_prompt)
+    query_text = ". ".join(query_parts)
+
+    logger.info(f"Searching vector DB with query: {query_text[:100]}…")
+
     try:
-        recipes = gemini.generate_recipes(ingredient_names, preferences)
-        return recipes
+        # Step 1: Generate embedding locally (instant, no API call)
+        query_vector = gemini.generate_embedding(query_text)
+
+        # Step 2: Build optional filters from preferences
+        diet_filter = vector_db.build_recipe_filter(
+            dietary_restrictions=preferences.dietary_restrictions or None,
+            skill_level=preferences.skill_level,
+        )
+
+        # Step 3: Search Actian VectorAI DB
+        client = vector_db.get_client()
+        client.connect()
+        try:
+            raw_results = vector_db.search_recipes(
+                client, query_vector, top_k=10, filter_obj=diet_filter,
+            )
+        finally:
+            client.close()
+
+        if not raw_results:
+            logger.warning("Vector DB returned no results, trying without filters…")
+            client = vector_db.get_client()
+            client.connect()
+            try:
+                raw_results = vector_db.search_recipes(
+                    client, query_vector, top_k=10,
+                )
+            finally:
+                client.close()
+
+        logger.info(f"Vector DB returned {len(raw_results)} results")
+
+        # Step 4: Format for frontend
+        return _format_results(raw_results, ingredient_names)
+
     except Exception as e:
-        logger.error(f"Failed to generate recipes: {e}", exc_info=True)
-        # Return empty list instead of crashing
-        return []
+        logger.error(f"Vector DB search failed: {e}", exc_info=True)
+        logger.info("Falling back to Gemini LLM recipe generation…")
+        # Fallback: generate recipes directly via Gemini
+        try:
+            recipes = gemini.generate_recipes(ingredient_names, preferences)
+            return recipes
+        except Exception as e2:
+            logger.error(f"Gemini fallback also failed: {e2}", exc_info=True)
+            return []
 
 
 # ── Direct Pipeline (default) ──
@@ -116,10 +174,10 @@ def run_direct_pipeline(
     image_bytes: bytes,
     preferences: UserPreferences,
 ) -> dict:
-    """Run the direct pipeline: image → ingredients → recipes.
+    """Run the direct pipeline: image → ingredients → vector DB search.
 
-    Uses exactly 2 Gemini API calls: 1 vision + 1 embedding.
-    No LangChain agent overhead.
+    Uses 1 Gemini API call (vision) + 1 local embedding (no API call).
+    Falls back to LLM-based recipe generation if the vector DB is unavailable.
     """
     # Step 1: Analyze image (1 Gemini API call)
     logger.info("Analyzing image with Gemini Vision...")
@@ -130,7 +188,7 @@ def run_direct_pipeline(
     if not ingredient_names:
         return {"detected_ingredients": [], "recipes": []}
 
-    # Step 2: Search recipes (1 Gemini embedding call + Actian DB query)
+    # Step 2: Search recipes via vector DB (local embedding + Actian query)
     logger.info("Searching recipes in Actian VectorAI DB...")
     recipes = _search_with_preferences(ingredient_names, preferences)
     logger.info(f"Found {len(recipes)} matching recipes")
