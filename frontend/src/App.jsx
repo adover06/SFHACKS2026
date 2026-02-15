@@ -35,7 +35,7 @@ import {
   arrayRemove,
 } from "firebase/firestore";
 import Questionnaire from "./Questionnaire";
-const FavoritesScreen = lazy(() => import("./FavoritesScreen"));
+import FavoritesScreen from "./FavoritesScreen";
 const CameraScreen = lazy(() => import("./CameraScreen"));
 
 /* Lazy-load fallback */
