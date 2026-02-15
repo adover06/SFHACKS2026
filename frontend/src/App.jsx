@@ -1,14 +1,12 @@
-import { useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import {
   Camera,
   Leaf,
-  ScanLine,
   ChefHat,
   ArrowLeft,
   Sparkles,
   UtensilsCrossed,
   Check,
-  Upload,
   Heart,
   LogOut,
   BookHeart,
@@ -45,53 +43,72 @@ const LazyFallback = () => (
   </div>
 );
 
-/* ───── mock recipe data ───── */
-const MOCK_RECIPES = [
-  {
-    id: 1,
-    title: "Garden Veggie Stir-Fry",
-    match: 92,
-    ingredients: ["Bell pepper", "Broccoli", "Soy sauce", "Garlic", "Rice"],
-  },
-  {
-    id: 2,
-    title: "Hearty Lentil Soup",
-    match: 85,
-    ingredients: ["Lentils", "Carrots", "Onion", "Celery", "Tomato paste"],
-  },
-  {
-    id: 3,
-    title: "Creamy Pasta Primavera",
-    match: 78,
-    ingredients: ["Pasta", "Zucchini", "Cream", "Parmesan", "Basil"],
-  },
-  {
-    id: 4,
-    title: "Black Bean Tacos",
-    match: 73,
-    ingredients: ["Black beans", "Tortillas", "Avocado", "Lime", "Cilantro"],
-  },
-  {
-    id: 5,
-    title: "Banana Oat Pancakes",
-    match: 68,
-    ingredients: ["Banana", "Oats", "Egg", "Cinnamon", "Maple syrup"],
-  },
-];
+/* ═══════════════════════════════════════════════════
+   Utility — convert a base64 data-URL to a Blob
+   ═══════════════════════════════════════════════════ */
+function base64ToBlob(dataUrl) {
+  const [header, data] = dataUrl.split(",");
+  const mime = header.match(/:(.*?);/)?.[1] || "image/jpeg";
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
 
 /* ═══════════════════════════════════════════════════
-   Utility — send images + prefs to backend
+   Utility — map questionnaire answers to the
+   UserPreferences shape the FastAPI backend expects.
+
+   Questionnaire stores:  { dietary, allergies, cuisine, goal }  (all strings)
+   Backend expects:       { dietary_restrictions: str[], cuisine_preferences: str[],
+                            allergies: str[], meal_type?: str, skill_level?: str,
+                            additional_prompt?: str }
+   ═══════════════════════════════════════════════════ */
+function toBackendPreferences(raw) {
+  if (!raw) return {};
+
+  /* Split a comma-separated string into a trimmed list, dropping blanks & "none" */
+  const toList = (s) =>
+    (s ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v && v.toLowerCase() !== "none");
+
+  return {
+    dietary_restrictions: toList(raw.dietary),
+    allergies:            toList(raw.allergies),
+    cuisine_preferences:  toList(raw.cuisine),
+    additional_prompt:    raw.goal?.trim() || null,
+  };
+}
+
+/* ═══════════════════════════════════════════════════
+   Utility — send image + prefs to backend via
+   multipart/form-data (matches FastAPI endpoint)
    ═══════════════════════════════════════════════════ */
 async function fetchRecipes(base64Images, preferences) {
   const API_URL =
     import.meta.env.VITE_API_URL || "http://localhost:8000/api/scan";
 
+  const formData = new FormData();
+
+  /* Send first image as a file upload */
+  const blob = base64ToBlob(base64Images[0]);
+  formData.append("image", blob, "pantry.jpg");
+
+  /* Transform questionnaire answers → backend schema, then serialize */
+  const backendPrefs = toBackendPreferences(preferences);
+  formData.append("preferences", JSON.stringify(backendPrefs));
+
   const res = await fetch(API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ images: base64Images, preferences }),
+    body: formData, /* browser sets Content-Type with boundary automatically */
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`API error ${res.status}: ${detail}`);
+  }
   return res.json();
 }
 
@@ -100,10 +117,10 @@ async function fetchRecipes(base64Images, preferences) {
    ═══════════════════════════════════════════════════ */
 const GoogleIcon = () => (
   <svg width="22" height="22" viewBox="0 0 48 48">
-    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-    <path fill="#FBBC05" d="M10.53 28.59a14.5 14.5 0 0 1 0-9.18l-7.98-6.19a24.003 24.003 0 0 0 0 21.56l7.98-6.19z"/>
-    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+    <path fill="#FBBC05" d="M10.53 28.59a14.5 14.5 0 0 1 0-9.18l-7.98-6.19a24.003 24.003 0 0 0 0 21.56l7.98-6.19z" />
+    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
   </svg>
 );
 
@@ -435,6 +452,8 @@ function LoadingScreen({ imageUrls }) {
    Recipe Card (with heart toggle)
    ═══════════════════════════════════════════════════ */
 function RecipeCard({ recipe, isFav, onToggleFav }) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <div
       className="min-w-[280px] max-w-[300px] flex-shrink-0 rounded-2xl p-5 card-elevated flex flex-col gap-3"
@@ -467,6 +486,31 @@ function RecipeCard({ recipe, isFav, onToggleFav }) {
         {recipe.match}% Pantry Match
       </span>
 
+      {/* Category & dietary tags */}
+      {(recipe.category || recipe.dietary_tags?.length > 0) && (
+        <div className="flex flex-wrap gap-1.5">
+          {recipe.category && (
+            <span className="text-xs px-2 py-0.5 rounded-lg font-medium"
+              style={{ backgroundColor: "var(--sage-200)", color: "var(--sage-700)" }}>
+              {recipe.category}
+            </span>
+          )}
+          {recipe.dietary_tags?.map((tag) => (
+            <span key={tag} className="text-xs px-2 py-0.5 rounded-lg"
+              style={{ backgroundColor: "var(--sage-50)", color: "var(--sage-600)" }}>
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Description */}
+      {recipe.description && (
+        <p className="text-sm leading-relaxed" style={{ color: "var(--sage-600)" }}>
+          {recipe.description}
+        </p>
+      )}
+
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--sage-500)" }}>
           Ingredients
@@ -479,6 +523,26 @@ function RecipeCard({ recipe, isFav, onToggleFav }) {
           ))}
         </ul>
       </div>
+
+      {/* Directions (expandable) */}
+      {recipe.directions?.length > 0 && (
+        <div>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-xs font-semibold uppercase tracking-wider mb-1 flex items-center gap-1"
+            style={{ color: "var(--sage-500)" }}
+          >
+            Directions {expanded ? "▲" : "▼"}
+          </button>
+          {expanded && (
+            <ol className="list-decimal list-inside text-sm space-y-1" style={{ color: "var(--sage-700)" }}>
+              {recipe.directions.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -486,7 +550,7 @@ function RecipeCard({ recipe, isFav, onToggleFav }) {
 /* ═══════════════════════════════════════════════════
    Results Screen
    ═══════════════════════════════════════════════════ */
-function ResultsScreen({ recipes, favoriteIds, onToggleFav, onReset, onHome, isGuest }) {
+function ResultsScreen({ recipes, detectedIngredients, scanError, favoriteIds, onToggleFav, onReset, onHome, isGuest }) {
   return (
     <div className="min-h-dvh px-6 py-10 flex flex-col gap-6 bg-pantry animate-fade-in-up">
       <div className="flex items-center justify-between stagger-1">
@@ -497,25 +561,65 @@ function ResultsScreen({ recipes, favoriteIds, onToggleFav, onReset, onHome, isG
         <div className="w-10" />
       </div>
 
-      <p className="text-sm stagger-2" style={{ color: "var(--sage-600)" }}>
-        <UtensilsCrossed size={16} className="inline mr-1 -mt-0.5" />
-        We found <strong>{recipes.length} recipes</strong> from your pantry items.
-      </p>
-
-      {isGuest && (
-        <p
-          className="text-xs text-center px-4 py-2.5 rounded-xl"
-          style={{ backgroundColor: "var(--sage-50)", color: "var(--sage-500)" }}
-        >
-          Sign in to save your favorite recipes across sessions.
-        </p>
+      {/* Error message */}
+      {scanError && (
+        <div className="rounded-2xl p-4 stagger-2" style={{ backgroundColor: "#fef2f2", border: "1px solid #fecaca" }}>
+          <p className="text-sm font-medium" style={{ color: "#991b1b" }}>
+            {scanError}
+          </p>
+        </div>
       )}
 
-      <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-6 px-6 stagger-3">
-        {recipes.map((r) => (
-          <RecipeCard key={r.id} recipe={r} isFav={favoriteIds.includes(r.id)} onToggleFav={onToggleFav} />
-        ))}
-      </div>
+      {/* Detected ingredients */}
+      {detectedIngredients.length > 0 && (
+        <div className="stagger-2">
+          <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--sage-500)" }}>
+            Detected Ingredients
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {detectedIngredients.map((ing) => (
+              <span
+                key={ing}
+                className="text-sm px-3 py-1 rounded-full font-medium"
+                style={{ backgroundColor: "var(--sage-100)", color: "var(--sage-700)" }}
+              >
+                {ing}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {recipes.length > 0 ? (
+        <>
+          <p className="text-sm stagger-2" style={{ color: "var(--sage-600)" }}>
+            <UtensilsCrossed size={16} className="inline mr-1 -mt-0.5" />
+            We found <strong>{recipes.length} recipes</strong> from your pantry items.
+          </p>
+
+          {isGuest && (
+            <p
+              className="text-xs text-center px-4 py-2.5 rounded-xl"
+              style={{ backgroundColor: "var(--sage-50)", color: "var(--sage-500)" }}
+            >
+              Sign in to save your favorite recipes across sessions.
+            </p>
+          )}
+
+          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-6 px-6 stagger-3">
+            {recipes.map((r) => (
+              <RecipeCard key={r.id} recipe={r} isFav={favoriteIds.includes(r.id)} onToggleFav={onToggleFav} />
+            ))}
+          </div>
+        </>
+      ) : !scanError ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <UtensilsCrossed size={48} style={{ color: "var(--sage-300)" }} />
+          <p className="text-center max-w-[260px]" style={{ color: "var(--sage-500)" }}>
+            No recipes found. Try scanning a different photo with more visible ingredients.
+          </p>
+        </div>
+      ) : null}
 
       <div className="mt-auto w-full max-w-xs mx-auto flex flex-col gap-3 stagger-4">
         <button
@@ -555,7 +659,9 @@ export default function App() {
   const [preferences, setPreferences] = useState(null);
   const [questionnaireCompleted, setQuestionnaireCompleted] = useState(false);
   const [favoriteIds, setFavoriteIds] = useState([]);
-  const [recipes, setRecipes] = useState(MOCK_RECIPES);
+  const [recipes, setRecipes] = useState([]);
+  const [detectedIngredients, setDetectedIngredients] = useState([]);
+  const [scanError, setScanError] = useState(null);
 
   /* ── 1. Auth listener — all logged-in users land on the home hub ── */
   useEffect(() => {
@@ -623,19 +729,29 @@ export default function App() {
     let cancelled = false;
 
     const run = async () => {
+      setScanError(null);
       try {
         const data = await Promise.race([
           fetchRecipes(base64Images, preferences),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000)),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("Request timed out — the server may be busy. Try again.")), 60000)),
         ]);
-        if (!cancelled) setRecipes(data.recipes ?? MOCK_RECIPES);
-      } catch {
-        if (!cancelled) setRecipes(MOCK_RECIPES);
+        if (!cancelled) {
+          setDetectedIngredients(data.detected_ingredients ?? []);
+          setRecipes(data.recipes ?? []);
+        }
+      } catch (err) {
+        console.error("Scan failed:", err);
+        if (!cancelled) {
+          setScanError(err.message || "Something went wrong. Please try again.");
+          setRecipes([]);
+          setDetectedIngredients([]);
+        }
       }
       if (!cancelled) setScreen("results");
     };
 
-    const timer = setTimeout(run, 3200);
+    /* small delay so the loading animation is visible */
+    const timer = setTimeout(run, 800);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [screen, base64Images, preferences]);
 
@@ -754,6 +870,8 @@ export default function App() {
       {screen === "results" && (
         <ResultsScreen
           recipes={recipes}
+          detectedIngredients={detectedIngredients}
+          scanError={scanError}
           favoriteIds={favoriteIds}
           onToggleFav={toggleFavorite}
           onReset={handleReset}
