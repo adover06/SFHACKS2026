@@ -7,3 +7,4 @@ actian-vectorAI-db-beta/
 node_modules/
 data/*.json
 data/*.csv
+firebase.js
